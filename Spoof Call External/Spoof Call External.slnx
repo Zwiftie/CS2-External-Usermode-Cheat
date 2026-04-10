@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Spoof Call External.vcxproj" Id="45bfaac6-d53d-4621-8af9-59a503eb1049" />
+</Solution>
