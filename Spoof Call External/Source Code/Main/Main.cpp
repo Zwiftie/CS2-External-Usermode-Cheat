@@ -41,7 +41,7 @@ static EntityData   g_entities[64];
 static int          g_entityCount = 0;
 static int          g_localEntityIndex = -1;
 
-// ── Debug State (keep your full DebugInfo struct) ──────────────────────────
+// ── Debug State (full struct from your original) ──────────────────────────
 static struct DebugInfo {
     bool enabled = true;
     uintptr_t clientBase = 0;
@@ -88,7 +88,7 @@ static struct DebugInfo {
     int pawnEntryNull = 0;
 } g_debug;
 
-// ── DX11 Helpers (unchanged) ───────────────────────────────────────────────
+// ── DX11 Helpers ───────────────────────────────────────────────────────────
 static void CreateRenderTarget() {
     ID3D11Texture2D* pBack = nullptr;
     g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBack));
@@ -134,7 +134,7 @@ static void CleanupDeviceD3D() {
     if (g_pd3dDevice) { g_pd3dDevice->Release();  g_pd3dDevice = nullptr; }
 }
 
-// ── WndProc (will be used for both hijacked and custom overlay) ────────────
+// ── WndProc ─────────────────────────────────────────────────────────────────
 static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
@@ -154,35 +154,24 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-// ── Overlay Hijacking ──────────────────────────────────────────────────────
-static HWND FindOverlayWindow() {
-    // Try NVIDIA GeForce Overlay first
-    HWND overlay = FindWindowW(L"CEF-OSC-WIDGET", L"NVIDIA GeForce Overlay");
-    if (overlay) return overlay;
+// ── Overlay creation (simple, no hijacking) ─────────────────────────────────
+static WNDCLASSEXW g_wc{};
 
-    // Fallback: Discord overlay
-    overlay = FindWindowW(L"Chrome_WidgetWin_0", L"Discord");
-    if (overlay) return overlay;
-
-    // Fallback: custom creation
-    return nullptr;
-}
-
-static HWND SetupCustomOverlay(HINSTANCE hInst, int x, int y, int w, int h) {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInst;
-    wc.lpszClassName = L"CS2Overlay";
-    RegisterClassExW(&wc);
+static HWND CreateOverlay(HINSTANCE hInst, int x, int y, int w, int h) {
+    g_wc = {};
+    g_wc.cbSize = sizeof(g_wc);
+    g_wc.style = CS_HREDRAW | CS_VREDRAW;
+    g_wc.lpfnWndProc = WndProc;
+    g_wc.hInstance = hInst;
+    g_wc.lpszClassName = L"CS2Overlay";
+    RegisterClassExW(&g_wc);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_LAYERED,
-        wc.lpszClassName, L"", WS_POPUP,
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+        g_wc.lpszClassName, L"", WS_POPUP,
         x, y, w, h,
-        nullptr, nullptr, hInst, nullptr
-    );
+        nullptr, nullptr, hInst, nullptr);
+
     SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 255, LWA_ALPHA);
     MARGINS margins = { -1, -1, -1, -1 };
     DwmExtendFrameIntoClientArea(hwnd, &margins);
@@ -323,24 +312,24 @@ static void UpdateEntityData(uintptr_t localPawn, uint8_t localTeam) {
 // ── Entry Point ─────────────────────────────────────────────────────────────
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SetProcessDPIAware();
-    // No console – remove AllocConsole for stealth. Errors will be written to a log file if needed.
-    // For debugging, you can keep it, but for final release, comment out AllocConsole.
+    AllocConsole();
+    FILE* fp = nullptr;
+    freopen_s(&fp, "CONOUT$", "w", stdout);
 
-    // Wait for CS2
     printf("[*] Waiting for Counter-Strike 2...\n");
-    while (!mem.Init(L"cs2.exe")) {
+    while (!mem.Init(L"cs2.exe"))
         Sleep(1000);
-    }
+
     printf("[+] CS2 found  PID: %u\n", mem.pid);
-    printf("[+] client.dll  0x%llX\n", static_cast<unsigned long long>(mem.client));
-    printf("[+] engine2.dll 0x%llX\n", static_cast<unsigned long long>(mem.engine));
+    printf("[+] client.dll  0x%llX\n", (unsigned long long)mem.client);
+    printf("[+] engine2.dll 0x%llX\n", (unsigned long long)mem.engine);
 
     g_debug.pid = mem.pid;
     g_debug.clientBase = mem.client;
     g_debug.engineBase = mem.engine;
 
-    if (!mem.client) { printf("[-] FATAL: client.dll base is NULL!\n"); }
-    if (!mem.engine) { printf("[-] FATAL: engine2.dll base is NULL!\n"); }
+    if (!mem.client) printf("[-] FATAL: client.dll base is NULL!\n");
+    if (!mem.engine) printf("[-] FATAL: engine2.dll base is NULL!\n");
 
     g_gameWnd = FindWindowA(nullptr, "Counter-Strike 2");
     if (!g_gameWnd) {
@@ -353,25 +342,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     g_width = gr.right - gr.left;
     g_height = gr.bottom - gr.top;
 
-    // ── Overlay Hijacking ───────────────────────────────────────────────────
-    g_overlay = FindOverlayWindow();
-    if (g_overlay) {
-        printf("[+] Hijacked existing overlay (HWND: 0x%p)\n", g_overlay);
-        // Modify its style to be layered and click-through when menu is hidden
-        LONG_PTR exStyle = GetWindowLongPtrW(g_overlay, GWL_EXSTYLE);
-        exStyle |= WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST;
-        SetWindowLongPtrW(g_overlay, GWL_EXSTYLE, exStyle);
-        SetLayeredWindowAttributes(g_overlay, RGB(0, 0, 0), 255, LWA_ALPHA);
-        // Force its position and size
-        SetWindowPos(g_overlay, HWND_TOPMOST, gr.left, gr.top, g_width, g_height, SWP_NOACTIVATE);
-        // Subclass its window procedure so ImGui can receive input
-        SetWindowLongPtrW(g_overlay, GWLP_WNDPROC, (LONG_PTR)WndProc);
-        ShowWindow(g_overlay, SW_SHOW);
-    }
-    else {
-        printf("[-] No overlay found. Creating custom overlay.\n");
-        g_overlay = SetupCustomOverlay(hInst, gr.left, gr.top, g_width, g_height);
-    }
+    // Create overlay
+    g_overlay = CreateOverlay(hInst, gr.left, gr.top, g_width, g_height);
+    printf("[+] Overlay created\n");
 
     // DX11 + ImGui
     if (!CreateDeviceD3D(g_overlay)) {
@@ -388,7 +361,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     ImGui_ImplWin32_Init(g_overlay);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dContext);
 
-    // Font loading (original code)
+    // Font loading (original from your working code)
     auto TryLoadFont = [&](const char* paths[], int count, float size, const ImFontConfig* cfg) -> ImFont* {
         for (int i = 0; i < count; i++) {
             DWORD attr = GetFileAttributesA(paths[i]);
@@ -440,7 +413,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (GetAsyncKeyState(VK_END) & 1) { g_running = false; break; }
         if (GetAsyncKeyState(VK_INSERT) & 1) {
             Menu::Toggle();
-            // Update click‑through state
             LONG_PTR exStyle = GetWindowLongPtr(g_overlay, GWL_EXSTYLE);
             if (Menu::IsVisible())
                 exStyle &= ~WS_EX_TRANSPARENT;
@@ -449,7 +421,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             SetWindowLongPtrW(g_overlay, GWL_EXSTYLE, exStyle);
         }
 
-        // Update overlay position (if game window moved/resized)
+        // Update overlay position
         if (!IsWindow(g_gameWnd)) { g_running = false; break; }
         RECT r;
         GetWindowRect(g_gameWnd, &r);
@@ -524,8 +496,9 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     CleanupDeviceD3D();
-    if (g_overlay && !FindOverlayWindow()) // if we created it ourselves, destroy it
+    if (g_overlay)
         DestroyWindow(g_overlay);
+    UnregisterClassW(g_wc.lpszClassName, hInst);
     mem.Cleanup();
 
     return 0;
