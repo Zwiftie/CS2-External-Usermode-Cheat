@@ -30,9 +30,11 @@ public:
         return WriteProcessMemory(handle, reinterpret_cast<LPVOID>(address), &value, sizeof(T), nullptr) != 0;
     }
 
+    // Made public so Main.cpp can call it if needed, but Init already sets client/engine
+    uintptr_t GetModuleBase(const wchar_t* moduleName);
+
 private:
     uint32_t GetProcessId(const wchar_t* processName);
-    uintptr_t GetModuleBase(const wchar_t* moduleName);
 };
 
 extern Memory mem;
