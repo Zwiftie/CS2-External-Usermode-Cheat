@@ -2,13 +2,30 @@
 #include "CallStack-Spoofer.h"
 #include "xorstr.hpp"
 #include <winternl.h>
+#include <string>
+#include <algorithm>
 #include <vector>
-#include <string>       // std::wstring
 
 #pragma comment(lib, "ntdll.lib")
 
 // ------------------------------------------------------------------
-// NT structs not exposed by winternl.h
+// Forward declarations
+// ------------------------------------------------------------------
+static bool ReadRemoteBuffer(HANDLE hProcess, uintptr_t address, void* buffer, SIZE_T size);
+static bool EnableDebugPrivilege();
+
+// ------------------------------------------------------------------
+// Direct syscall function pointers
+// ------------------------------------------------------------------
+typedef NTSTATUS(NTAPI* pNtReadVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
+typedef NTSTATUS(NTAPI* pNtWriteVirtualMemory)(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
+typedef NTSTATUS(NTAPI* pNtClose)(HANDLE);
+typedef NTSTATUS(NTAPI* pNtDuplicateObject)(HANDLE, HANDLE, HANDLE, PHANDLE, ACCESS_MASK, ULONG, ULONG);
+typedef NTSTATUS(NTAPI* pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+typedef NTSTATUS(NTAPI* pNtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
+
+// ------------------------------------------------------------------
+// NT constants not exposed by winternl.h
 // ------------------------------------------------------------------
 #ifndef STATUS_INFO_LENGTH_MISMATCH
 #define STATUS_INFO_LENGTH_MISMATCH 0xC0000004L
@@ -16,6 +33,7 @@
 
 #define SystemHandleInformation (SYSTEM_INFORMATION_CLASS)16
 
+// Handle enumeration structures
 typedef struct _SYSTEM_HANDLE_TABLE_ENTRY_INFO {
     USHORT      UniqueProcessId;
     USHORT      CreatorBackTraceIndex;
@@ -30,15 +48,6 @@ typedef struct _SYSTEM_HANDLE_INFORMATION {
     ULONG                          NumberOfHandles;
     SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles[1];
 } SYSTEM_HANDLE_INFORMATION, * PSYSTEM_HANDLE_INFORMATION;
-
-// ------------------------------------------------------------------
-// NT function typedefs
-// ------------------------------------------------------------------
-typedef NTSTATUS(NTAPI* pNtReadVirtualMemory)      (HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
-typedef NTSTATUS(NTAPI* pNtWriteVirtualMemory)     (HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
-typedef NTSTATUS(NTAPI* pNtClose)                  (HANDLE);
-typedef NTSTATUS(NTAPI* pNtDuplicateObject)        (HANDLE, HANDLE, HANDLE, PHANDLE, ACCESS_MASK, ULONG, ULONG);
-typedef NTSTATUS(NTAPI* pNtQuerySystemInformation) (SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 
 // ------------------------------------------------------------------
 // Lazy-loaded NT function pointers
@@ -78,8 +87,39 @@ static pNtQuerySystemInformation GetNtQuerySystemInformation() {
     return pFn;
 }
 
+static pNtQueryInformationProcess GetNtQueryInformationProcess() {
+    static pNtQueryInformationProcess pFn = nullptr;
+    if (!pFn) pFn = (pNtQueryInformationProcess)GetProcAddress(
+        GetModuleHandleA(xorstr_("ntdll.dll")), xorstr_("NtQueryInformationProcess"));
+    return pFn;
+}
+
 // ------------------------------------------------------------------
-// Find process ID by name
+// Enable SeDebugPrivilege (required to open system processes)
+// ------------------------------------------------------------------
+static bool EnableDebugPrivilege() {
+    HANDLE hToken;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+        return false;
+
+    LUID luid;
+    if (!LookupPrivilegeValue(nullptr, SE_DEBUG_NAME, &luid)) {
+        CloseHandle(hToken);
+        return false;
+    }
+
+    TOKEN_PRIVILEGES tp;
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    bool success = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), nullptr, nullptr);
+    CloseHandle(hToken);
+    return success && GetLastError() == ERROR_SUCCESS;
+}
+
+// ------------------------------------------------------------------
+// Helper: find process ID by name
 // ------------------------------------------------------------------
 static DWORD FindProcessId(const wchar_t* processName) {
     SPOOF_FUNC;
@@ -102,83 +142,126 @@ static DWORD FindProcessId(const wchar_t* processName) {
 }
 
 // ------------------------------------------------------------------
-// Hijack a handle to the target process from a trusted system process
+// Read remote memory via NT syscall
 // ------------------------------------------------------------------
-static HANDLE HijackGameHandle(DWORD targetPid, ACCESS_MASK desiredAccess) {
+static bool ReadRemoteBuffer(HANDLE hProcess, uintptr_t address, void* buffer, SIZE_T size) {
+    SIZE_T bytesRead = 0;
+    NTSTATUS status = GetNtReadVirtualMemory()(hProcess, (PVOID)address, buffer, size, &bytesRead);
+    return NT_SUCCESS(status) && bytesRead == size;
+}
+
+// ------------------------------------------------------------------
+// Hijack a handle to the target process from a list of candidates
+// ------------------------------------------------------------------
+static HANDLE HijackGameHandle(DWORD targetPid) {
     SPOOF_FUNC;
 
-    auto NtQuerySystemInformation = GetNtQuerySystemInformation();
-    auto NtDuplicateObject = GetNtDuplicateObject();
-    auto NtClose = GetNtClose();
-    if (!NtQuerySystemInformation || !NtDuplicateObject || !NtClose)
+    // Enable debug privilege (required for many candidates)
+    if (!EnableDebugPrivilege()) {
+        printf("[!] Failed to enable debug privilege.\n");
         return nullptr;
+    }
 
-    // xorstr_ returns a temporary — store as std::wstring so the pointer stays valid
-    const std::wstring candidateNames[] = {
-        xorstr_(L"svchost.exe"),
-        xorstr_(L"lsass.exe"),
-        xorstr_(L"winlogon.exe"),
-        xorstr_(L"csrss.exe")
+    // List of candidate processes that may have a handle to the game
+    // construct std::wstring from xorstr_ (avoid calling .crypt_get() on pointer types)
+    const std::wstring candidates[] = {
+        std::wstring(xorstr_(L"steam.exe")),
+        std::wstring(xorstr_(L"csrss.exe")),
+        std::wstring(xorstr_(L"winlogon.exe")),
+        std::wstring(xorstr_(L"lsass.exe"))
     };
 
     DWORD candidatePid = 0;
-    for (const auto& name : candidateNames) {
+    for (const auto& name : candidates) {
         candidatePid = FindProcessId(name.c_str());
-        if (candidatePid) break;
+        if (candidatePid) {
+            printf("[*] Found candidate process: %ls (PID: %d)\n", name.c_str(), candidatePid);
+            break;
+        }
     }
-    if (!candidatePid) return nullptr;
+    if (!candidatePid) {
+        printf("[!] No candidate process found.\n");
+        return nullptr;
+    }
 
+    // Open the candidate process with PROCESS_DUP_HANDLE
     HANDLE hCandidate = OpenProcess(PROCESS_DUP_HANDLE, FALSE, candidatePid);
-    if (!hCandidate) return nullptr;
+    if (!hCandidate) {
+        DWORD err = GetLastError();
+        printf("[!] Failed to open candidate process. Error: %lu\n", err);
+        return nullptr;
+    }
 
+    // Query system handle information – dynamic buffer
     ULONG bufferSize = 0x10000;
     std::vector<BYTE> buffer(bufferSize);
-
-    NTSTATUS status = NtQuerySystemInformation(
-        SystemHandleInformation, buffer.data(), bufferSize, &bufferSize);
-    if (status == (NTSTATUS)STATUS_INFO_LENGTH_MISMATCH) {
+    NTSTATUS status;
+    while ((status = GetNtQuerySystemInformation()(SystemHandleInformation, buffer.data(), bufferSize, &bufferSize)) == STATUS_INFO_LENGTH_MISMATCH) {
         buffer.resize(bufferSize);
-        status = NtQuerySystemInformation(
-            SystemHandleInformation, buffer.data(), bufferSize, &bufferSize);
     }
     if (!NT_SUCCESS(status)) {
+        printf("[!] NtQuerySystemInformation failed. Status: 0x%08lx\n", status);
         CloseHandle(hCandidate);
         return nullptr;
     }
 
     auto* handleInfo = reinterpret_cast<PSYSTEM_HANDLE_INFORMATION>(buffer.data());
+    printf("[*] Enumerating %lu handles...\n", handleInfo->NumberOfHandles);
+
     for (ULONG i = 0; i < handleInfo->NumberOfHandles; ++i) {
         auto* entry = &handleInfo->Handles[i];
-        if (entry->UniqueProcessId != (USHORT)candidatePid)
-            continue;
+        if (entry->UniqueProcessId != candidatePid) continue;
 
         HANDLE dupHandle = nullptr;
-        status = NtDuplicateObject(
-            hCandidate, (HANDLE)(ULONG_PTR)entry->HandleValue,
+        status = GetNtDuplicateObject()(hCandidate, (HANDLE)(ULONG_PTR)entry->HandleValue,
             GetCurrentProcess(), &dupHandle,
             0, 0, DUPLICATE_SAME_ACCESS);
-        if (!NT_SUCCESS(status) || !dupHandle)
-            continue;
+        if (!NT_SUCCESS(status) || !dupHandle) continue;
 
+        // Check if this handle belongs to our target process
         if (GetProcessId(dupHandle) == targetPid) {
+            printf("[+] Found a handle to target process in candidate process.\n");
+            // Duplicate it with desired access
             HANDLE finalHandle = nullptr;
-            status = NtDuplicateObject(
-                hCandidate, (HANDLE)(ULONG_PTR)entry->HandleValue,
+            status = GetNtDuplicateObject()(hCandidate, (HANDLE)(ULONG_PTR)entry->HandleValue,
                 GetCurrentProcess(), &finalHandle,
-                desiredAccess, 0, 0);
-            NtClose(dupHandle);
+                PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                0, 0);
+            GetNtClose()(dupHandle);
             CloseHandle(hCandidate);
-            return (NT_SUCCESS(status) && finalHandle) ? finalHandle : nullptr;
+            if (NT_SUCCESS(status) && finalHandle) {
+                printf("[+] Handle hijacked successfully.\n");
+                return finalHandle;
+            }
+            else {
+                printf("[!] Failed to duplicate handle with desired access.\n");
+                return nullptr;
+            }
         }
-        NtClose(dupHandle);
+        GetNtClose()(dupHandle);
     }
 
+    printf("[!] No handle to target process found in candidate process.\n");
     CloseHandle(hCandidate);
     return nullptr;
 }
 
 // ------------------------------------------------------------------
-// Memory implementation
+// Full LDR_DATA_TABLE_ENTRY for PEB walking
+// ------------------------------------------------------------------
+typedef struct _LDR_DATA_TABLE_ENTRY_FULL {
+    LIST_ENTRY  InLoadOrderLinks;
+    LIST_ENTRY  InMemoryOrderLinks;
+    LIST_ENTRY  InInitializationOrderLinks;
+    PVOID       DllBase;
+    PVOID       EntryPoint;
+    ULONG       SizeOfImage;
+    UNICODE_STRING FullDllName;
+    UNICODE_STRING BaseDllName;
+} LDR_DATA_TABLE_ENTRY_FULL, * PLDR_DATA_TABLE_ENTRY_FULL;
+
+// ------------------------------------------------------------------
+// Memory class implementation
 // ------------------------------------------------------------------
 Memory mem;
 
@@ -186,19 +269,32 @@ bool Memory::Init(const wchar_t* processName) {
     SPOOF_FUNC;
 
     pid = FindProcessId(processName);
-    if (!pid) return false;
+    if (!pid) {
+        printf("[!] Could not find process %ls\n", processName);
+        return false;
+    }
+    printf("[*] Target process PID: %d\n", pid);
 
-    handle = HijackGameHandle(pid, PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION);
-    if (!handle) return false;
+    // ONLY handle hijacking – NO OpenProcess fallback
+    handle = HijackGameHandle(pid);
+    if (!handle) {
+        printf("[!] Handle hijacking failed. Cheat cannot continue.\n");
+        return false;
+    }
 
-    // Store xorstr_ temporaries in std::wstring before passing to GetModuleBase
+    // Obfuscated module names
     std::wstring clientDll = xorstr_(L"client.dll");
     std::wstring engineDll = xorstr_(L"engine2.dll");
 
     client = GetModuleBase(clientDll.c_str());
     engine = GetModuleBase(engineDll.c_str());
 
-    return client != 0 && engine != 0;
+    if (!client || !engine) {
+        printf("[!] Failed to get module bases.\n");
+        return false;
+    }
+
+    return true;
 }
 
 bool Memory::ReadRaw(uintptr_t address, void* buffer, size_t size) const {
@@ -206,8 +302,7 @@ bool Memory::ReadRaw(uintptr_t address, void* buffer, size_t size) const {
     if (!address || !buffer) return false;
 
     SIZE_T bytesRead = 0;
-    NTSTATUS status = GetNtReadVirtualMemory()(
-        handle, (PVOID)address, buffer, size, &bytesRead);
+    NTSTATUS status = GetNtReadVirtualMemory()(handle, (PVOID)address, buffer, size, &bytesRead);
     return NT_SUCCESS(status) && bytesRead == size;
 }
 
@@ -244,20 +339,46 @@ uint32_t Memory::GetProcessId(const wchar_t* processName) {
 
 uintptr_t Memory::GetModuleBase(const wchar_t* moduleName) {
     SPOOF_FUNC;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
 
-    MODULEENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    uintptr_t result = 0;
-    if (Module32FirstW(snap, &entry)) {
-        do {
-            if (_wcsicmp(entry.szModule, moduleName) == 0) {
-                result = reinterpret_cast<uintptr_t>(entry.modBaseAddr);
-                break;
+    auto NtQueryInformationProcess = GetNtQueryInformationProcess();
+    if (!NtQueryInformationProcess) return 0;
+
+    // 1. Get PEB address
+    PROCESS_BASIC_INFORMATION pbi{};
+    ULONG returnLength = 0;
+    NTSTATUS status = NtQueryInformationProcess(handle, ProcessBasicInformation, &pbi, sizeof(pbi), &returnLength);
+    if (!NT_SUCCESS(status) || !pbi.PebBaseAddress) return 0;
+
+    // 2. Read PEB
+    PEB peb{};
+    if (!ReadRemoteBuffer(handle, (uintptr_t)pbi.PebBaseAddress, &peb, sizeof(peb)))
+        return 0;
+    if (!peb.Ldr) return 0;
+
+    // 3. Read PEB_LDR_DATA
+    PEB_LDR_DATA ldr{};
+    if (!ReadRemoteBuffer(handle, (uintptr_t)peb.Ldr, &ldr, sizeof(ldr)))
+        return 0;
+
+    // 4. Walk the InMemoryOrderModuleList
+    uintptr_t headAddr = (uintptr_t)peb.Ldr + offsetof(PEB_LDR_DATA, InMemoryOrderModuleList);
+    uintptr_t currentAddr = (uintptr_t)ldr.InMemoryOrderModuleList.Flink;
+
+    while (currentAddr && currentAddr != headAddr) {
+        uintptr_t entryBase = currentAddr - offsetof(LDR_DATA_TABLE_ENTRY_FULL, InMemoryOrderLinks);
+        LDR_DATA_TABLE_ENTRY_FULL entry{};
+        if (!ReadRemoteBuffer(handle, entryBase, &entry, sizeof(entry)))
+            break;
+
+        if (entry.BaseDllName.Buffer && entry.BaseDllName.Length > 0) {
+            WCHAR nameBuffer[MAX_PATH]{};
+            SIZE_T nameSize = (std::min)((SIZE_T)entry.BaseDllName.Length, (SIZE_T)(MAX_PATH - 1) * sizeof(WCHAR));
+            if (ReadRemoteBuffer(handle, (uintptr_t)entry.BaseDllName.Buffer, nameBuffer, nameSize)) {
+                if (_wcsicmp(nameBuffer, moduleName) == 0)
+                    return (uintptr_t)entry.DllBase;
             }
-        } while (Module32NextW(snap, &entry));
+        }
+        currentAddr = (uintptr_t)entry.InMemoryOrderLinks.Flink;
     }
-    CloseHandle(snap);
-    return result;
+    return 0;
 }
