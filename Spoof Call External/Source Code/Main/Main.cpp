@@ -23,6 +23,8 @@
 #include "Triggerbot.h"
 #include "Glow.h"
 #include "xorstr.hpp"
+#include "RCS.h"
+#include "BombTimer.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -92,6 +94,22 @@ static struct DebugInfo {
     int pawnEntryNull = 0;
 } g_debug;
 
+// ── Mouse capture / clipping for menu ───────────────────────────────────────
+static void UpdateMenuClipCursor(bool menuVisible) {
+    if (menuVisible && IsWindow(g_overlay)) {
+        RECT rect;
+        GetClientRect(g_overlay, &rect);
+        ClientToScreen(g_overlay, (LPPOINT)&rect);
+        ClientToScreen(g_overlay, (LPPOINT)&rect + 1);
+        ClipCursor(&rect);
+        SetCapture(g_overlay);
+    }
+    else {
+        ClipCursor(NULL);
+        ReleaseCapture();
+    }
+}
+
 // ── DX11 Helpers ───────────────────────────────────────────────────────────
 static void CreateRenderTarget() {
     ID3D11Texture2D* pBack = nullptr;
@@ -152,6 +170,8 @@ static LRESULT WINAPI OverlayWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
         }
         return 0;
     case WM_DESTROY:
+        ClipCursor(NULL);
+        ReleaseCapture();
         PostQuitMessage(0);
         return 0;
     }
@@ -430,10 +450,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (GetAsyncKeyState(VK_INSERT) & 1) {
             Menu::Toggle();
             LONG_PTR exStyle = GetWindowLongPtr(g_overlay, GWL_EXSTYLE);
-            if (Menu::IsVisible())
+            if (Menu::IsVisible()) {
                 exStyle &= ~WS_EX_TRANSPARENT;
-            else
+                UpdateMenuClipCursor(true);
+                SetForegroundWindow(g_overlay);
+            }
+            else {
                 exStyle |= WS_EX_TRANSPARENT;
+                UpdateMenuClipCursor(false);
+            }
             SetWindowLongPtrW(g_overlay, GWL_EXSTYLE, exStyle);
         }
 
@@ -445,6 +470,13 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             MoveWindow(g_overlay, r.left, r.top, w, h, TRUE);
             g_width = w; g_height = h;
             gr = r;
+            if (Menu::IsVisible()) {
+                RECT rect;
+                GetClientRect(g_overlay, &rect);
+                ClientToScreen(g_overlay, (LPPOINT)&rect);
+                ClientToScreen(g_overlay, (LPPOINT)&rect + 1);
+                ClipCursor(&rect);
+            }
         }
 
         uintptr_t localController = mem.Read<uintptr_t>(mem.client + offsets::client::dwLocalPlayerController);
@@ -462,8 +494,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             g_debug.localHealth = mem.Read<int>(localPawn + offsets::entity::m_iHealth);
             g_debug.viewAngles = mem.Read<Vector3>(mem.client + offsets::client::dwViewAngles);
 
-            // Derive local entity index from pawn handle low 9 bits.
-            // m_bSpottedByMask uses slot = handle & 0x1FF as the bit index.
             {
                 uint32_t localPawnHandle = mem.Read<uint32_t>(
                     localController + offsets::controller::m_hPlayerPawn);
@@ -480,6 +510,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
             NoFlash::Run(localPawn);
             Triggerbot::Run(localPawn, localTeam);
             Glow::Run(localController);
+            RCS::Run();
         }
         else {
             g_entityCount = 0;
@@ -493,6 +524,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         if (localController && localPawn) {
             ESP::Render(g_entities, g_entityCount, viewMatrix, g_width, g_height);
             Aimbot::Run(g_entities, g_entityCount, localPawn, localController, g_localEntityIndex, g_width, g_height);
+            BombTimer::Render();
 
             if (config.bAimbot && config.bFovCircle) {
                 float radPerDeg = 3.14159265f / 180.0f;

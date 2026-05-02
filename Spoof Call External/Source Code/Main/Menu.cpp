@@ -462,7 +462,7 @@ static void RenderMenu()
         ImGui::EndChild();
 
         // Footer
-        const char* ver = "V 2.0";
+        const char* ver = "V 2.1";
         ImVec2 vs = ImGui::CalcTextSize(ver);
         dl->AddText({ wp.x + (sideW - vs.x) * 0.5f, wp.y + H - 22.f }, C_TEXT_MUTED, ver);
 
@@ -594,8 +594,6 @@ static void RenderMenu()
         {
             float half = contentW * 0.5f;
             ImGui::BeginGroup(); ToggleSwitch("##aim_en", "Enable Aimbot", &config.bAimbot); ImGui::EndGroup();
-            ImGui::SameLine(half);
-            ImGui::BeginGroup(); ToggleSwitch("##rcs", "RCS", &config.bRcs); ImGui::EndGroup();
         }
 
         // Aim Mode selector
@@ -647,7 +645,7 @@ static void RenderMenu()
             ImGui::EndGroup();
             ImGui::SameLine(half + 12.f);
             ImGui::BeginGroup();
-            ToggleSwitch("##aim_b_chest", "Chest", &config.aimBones[BoneIndex::SPINE_2]); ImGui::Dummy({ 0,2 });
+            ToggleSwitch("##aim_b_chest", "Chest", &config.aimBones[BoneIndex::CHEST]); ImGui::Dummy({ 0,2 });
             ToggleSwitch("##aim_b_pelvis", "Pelvis", &config.aimBones[BoneIndex::PELVIS]);
             ImGui::EndGroup();
         }
@@ -691,6 +689,13 @@ static void RenderMenu()
             SliderInt("##trigdelay", "Delay (ms)", &config.triggerDelay, 0, 100, "%d ms");
             ImGui::Spacing();
             KeyBind("trigkey", "Trigger Key", &config.triggerKey);
+            SectionLabel("RECOIL CONTROL");
+            ToggleSwitch("##rcs_enable", "Enable RCS", &config.bRcs);
+            if (config.bRcs) {
+                SliderFloat("##rcs_strength", "Strength", &config.rcsStrength, 0.0f, 2.0f, "%.2f");
+                SliderFloat("##rcs_smooth", "Smoothing (%)", &config.rcsSmooth, 0.0f, 100.0f, "%.0f%%");
+            }
+            ImGui::Spacing();
         }
         CardEnd();
     }
@@ -711,6 +716,7 @@ static void RenderMenu()
             ImGui::BeginGroup(); ToggleSwitch("##bhop", "Bunny Hop", &config.bBhop); ImGui::EndGroup();
             ImGui::SameLine(half + 12.f);
             ImGui::BeginGroup(); ToggleSwitch("##noflash", "No Flash", &config.bNoFlash); ImGui::EndGroup();
+            ToggleSwitch("##bombtimer", "Bomb Timer", &config.bBombTimer);
         }
         CardEnd();
     }

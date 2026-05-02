@@ -35,24 +35,39 @@ struct Matrix4x4 {
 };
 
 namespace BoneIndex {
-    constexpr int PELVIS = 0;
-    constexpr int SPINE_1 = 2;
-    constexpr int SPINE_2 = 4;
-    constexpr int NECK = 5;
-    constexpr int HEAD = 6;
-    constexpr int LEFT_SHOULDER = 8;
-    constexpr int LEFT_ELBOW = 9;
-    constexpr int LEFT_HAND = 11;
-    constexpr int RIGHT_SHOULDER = 13;
-    constexpr int RIGHT_ELBOW = 14;
-    constexpr int RIGHT_HAND = 16;
-    constexpr int LEFT_HIP = 22;
-    constexpr int LEFT_KNEE = 23;
-    constexpr int LEFT_FOOT = 24;
-    constexpr int RIGHT_HIP = 25;
-    constexpr int RIGHT_KNEE = 26;
-    constexpr int RIGHT_FOOT = 27;
-    constexpr int BONE_COUNT = 28;
+    constexpr int ORIGIN = 0;
+    constexpr int PELVIS = 1;
+    constexpr int SPINE0 = 2;
+    constexpr int SPINE1 = 3;
+    constexpr int SPINE2 = 4;
+    constexpr int NECK = 6;
+    constexpr int HEAD = 7;
+    constexpr int CLAVICLE_L = 8;
+    constexpr int SHOULDER_L = 9;
+    constexpr int ELBOW_L = 10;
+    constexpr int HAND_L = 11;
+    constexpr int CLAVICLE_R = 12;
+    constexpr int SHOULDER_R = 13;
+    constexpr int ELBOW_R = 14;
+    constexpr int HAND_R = 15;
+    constexpr int HIP_L = 17;
+    constexpr int KNEE_L = 18;
+    constexpr int FOOT_HEEL_L = 19;
+    constexpr int HIP_R = 20;
+    constexpr int KNEE_R = 21;
+    constexpr int FOOT_HEEL_R = 22;
+    constexpr int CHEST = 23;
+    constexpr int GUN = 24;
+    constexpr int EYE_L = 25;
+    constexpr int EYE_R = 26;
+    constexpr int RANDOM = 27;
+    constexpr int CVJ_BONE = 28;
+    constexpr int FOOT_TOES_L_T = 74;
+    constexpr int FOOT_TOES_R_T = 77;
+    constexpr int FOOT_TOES_L_CT = 81;
+    constexpr int FOOT_TOES_R_CT = 86;
+    constexpr int BONE_MAX = 128;
+    constexpr int BONE_COUNT = 128;
 }
 
 inline bool WorldToScreen(const Vector3& pos, Vector2& screen, const Matrix4x4& matrix, int width, int height) {

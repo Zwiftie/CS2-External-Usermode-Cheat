@@ -33,6 +33,8 @@ struct Config {
     float aimFovColor[4] = { 0.0f, 0.78f, 1.0f, 0.63f };
     bool bVisibleCheck = true;
     bool bRcs = false;
+    float rcsStrength = 2.0f;
+    float rcsSmooth = 70.0f;
     bool aimBones[BoneIndex::BONE_COUNT] = {};
 
     // NEW aimbot features
@@ -56,6 +58,7 @@ struct Config {
     // Misc
     bool bBhop = false;
     bool bNoFlash = false;
+    bool bBombTimer = false;
 
     // Glow
     bool bGlow = false;

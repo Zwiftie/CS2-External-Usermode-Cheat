@@ -64,16 +64,8 @@ namespace Aimbot {
         Vector3 eyePos = localOrigin + viewOffset;
         Vector3 viewAngles = mem.Read<Vector3>(mem.client + offsets::client::dwViewAngles);
 
-        Vector3 punchAngle = {};
-        if (config.bRcs) {
-            int shotsFired = mem.Read<int>(localPawn + offsets::csPawn::m_iShotsFired);
-            if (shotsFired > 1)
-                punchAngle = mem.Read<Vector3>(localPawn + offsets::csPawn::m_aimPunchAngle);
-        }
-
+        // No RCS – use raw view angles for FOV calculation
         Vector3 visualAngles = viewAngles;
-        visualAngles.x += punchAngle.x * 2.0f;
-        visualAngles.y += punchAngle.y * 2.0f;
         NormalizeAngles(visualAngles);
 
         float bestFov = config.aimFov;
@@ -110,9 +102,7 @@ namespace Aimbot {
         if (!found) return;
 
         viewAngles = mem.Read<Vector3>(mem.client + offsets::client::dwViewAngles);
-        Vector3 compensated = bestRawAngle;
-        compensated.x -= punchAngle.x * 2.0f;
-        compensated.y -= punchAngle.y * 2.0f;
+        Vector3 compensated = bestRawAngle;   // no RCS compensation
         NormalizeAngles(compensated);
 
         // ---- Periodic updates for jitter and imperfect offsets (every 250ms) ----

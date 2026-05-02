@@ -131,6 +131,7 @@
   <ItemGroup>
     <ClCompile Include="Source Code\Features\Aimbot.cpp" />
     <ClCompile Include="Source Code\Features\ArmorBar.cpp" />
+    <ClCompile Include="Source Code\Features\BombTimer.cpp" />
     <ClCompile Include="Source Code\Features\Box.cpp" />
     <ClCompile Include="Source Code\Features\Bunnyhop.cpp" />
     <ClCompile Include="Source Code\Features\Distance.cpp" />
@@ -139,6 +140,7 @@
     <ClCompile Include="Source Code\Features\HealthBar.cpp" />
     <ClCompile Include="Source Code\Features\Name.cpp" />
     <ClCompile Include="Source Code\Features\NoFlash.cpp" />
+    <ClCompile Include="Source Code\Features\RCS.cpp" />
     <ClCompile Include="Source Code\Features\Skeleton.cpp" />
     <ClCompile Include="Source Code\Features\Snapline.cpp" />
     <ClCompile Include="Source Code\Features\Triggerbot.cpp" />
@@ -156,6 +158,7 @@
   <ItemGroup>
     <ClInclude Include="Source Code\Features\Aimbot.h" />
     <ClInclude Include="Source Code\Features\ArmorBar.h" />
+    <ClInclude Include="Source Code\Features\BombTimer.h" />
     <ClInclude Include="Source Code\Features\Box.h" />
     <ClInclude Include="Source Code\Features\Bunnyhop.h" />
     <ClInclude Include="Source Code\Features\Distance.h" />
@@ -164,6 +167,7 @@
     <ClInclude Include="Source Code\Features\HealthBar.h" />
     <ClInclude Include="Source Code\Features\Name.h" />
     <ClInclude Include="Source Code\Features\NoFlash.h" />
+    <ClInclude Include="Source Code\Features\RCS.h" />
     <ClInclude Include="Source Code\Features\Skeleton.h" />
     <ClInclude Include="Source Code\Features\Snapline.h" />
     <ClInclude Include="Source Code\Features\Triggerbot.h" />

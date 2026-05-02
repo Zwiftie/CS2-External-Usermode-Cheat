@@ -102,6 +102,12 @@
     <ClCompile Include="Source Code\ImGUI\imgui_widgets.cpp">
       <Filter>Source Files\ImGUI</Filter>
     </ClCompile>
+    <ClCompile Include="Source Code\Features\RCS.cpp">
+      <Filter>Source Files\Features</Filter>
+    </ClCompile>
+    <ClCompile Include="Source Code\Features\BombTimer.cpp">
+      <Filter>Source Files\Features</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source Code\ImGUI\imconfig.h">
@@ -193,6 +199,12 @@
     </ClInclude>
     <ClInclude Include="Source Code\Main\xorstr.hpp">
       <Filter>Source Files\Main</Filter>
+    </ClInclude>
+    <ClInclude Include="Source Code\Features\RCS.h">
+      <Filter>Header Files\Features</Filter>
+    </ClInclude>
+    <ClInclude Include="Source Code\Features\BombTimer.h">
+      <Filter>Header Files\Features</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
